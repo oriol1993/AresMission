@@ -10,7 +10,6 @@
 //BMP280 variable define
 #include <Wire.h>
 #include <SPI.h>
-#include <Adafruit_Sensor.h>
 #include <Adafruit_BMP280.h>
 
 #define BMP_SCK 13
@@ -57,7 +56,7 @@ Serial.println(F("BMP280 OK"));
 void loop()
 {
   read_buttn();
-  //updt_barom();
+  updt_barom();
   //updt_gps();
   //igni_stage();
   //igni_parac();
