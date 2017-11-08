@@ -7,15 +7,36 @@
 #define led_red 4
 #define led_green 6 // Raro
 
+//BMP280 variable define
+#include <Wire.h>
+#include <SPI.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BMP280.h>
+
+#define BMP_SCK 13
+#define BMP_MISO 12
+#define BMP_MOSI 11
+#define BMP_CS 10
+
+Adafruit_BMP280 bmp;
+//
 
 int state=0;
 int pb_ispressed=0;
 int blink_state=0;
 int led_blue_state = 0;
 int led_blue_n = 0;
+double value_baromax=0;
+double value_barom=0;
+double value_temp=0;
+double value_pressure=0;
+bool flag_barom=0;
 uint32_t pb_ton;
 uint32_t led_blue_tchange = 0;
 uint32_t blueled_lastchange = 0;
+uint32_t tbarom_last=0;
+uint32_t barom_period=0;
+
 
 void setup()
 {
@@ -25,6 +46,12 @@ pinMode(led_blue,OUTPUT);
 pinMode(led_red,OUTPUT);
 pinMode(led_green,OUTPUT);
 pinMode(pushbutton,INPUT_PULLUP);
+Serial.println(F("BMP280 OK"));
+
+    if (!bmp.begin()) {
+        Serial.println(F("Could not find a valid BMP280 sensor, check wiring!"));
+          while (1);
+        }
 }
 
 void loop()
@@ -73,15 +100,23 @@ void updt_accel(){
 }
 void updt_barom(){
   //inputs: state, tbarom_last, value_baromax
-  //outputs: tbarom_last, flag_barom, value_barom, value_baromax
+  //outputs: tbarom_last, flag_barom, value_barom, value_baromax, value_temp, value_pressure
+uint32_t dt = millis()-tbarom_last;
+  if(dt>barom_period && !flag_barom){
+    tbarom_last = millis();
+    flag_barom = true;
+   }
+   value_barom=bmp.readAltitude(1013.25);
+   value_temp=bmp.readTemperature();
+   value_pressure=bmp.readPressure();
+   if(value_barom > value_baromax){
+     value_baromax=value_barom;
+     Serial.print(F("BMP280 valor maxim = "));
+     Serial.print(value_baromax);
+     Serial.println(F("m"));
+     }
+ }
 
- // uint32_t dt = millis()-tbarom_last;
- // if(dt>barom_period && !flag_barom){
- //   tbarom_last = millis();
- //   flag_barom = true;
-    // measure
-//  }
-//}
 void updt_gps(){
   //inputs: tgps_last
   //outputs: tgps_last, flag_gps, value_gps
