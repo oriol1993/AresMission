@@ -1,21 +1,35 @@
+// PINS
 #define pushbutton 5
+#define led_blue 3
+#define led_red 4
+#define led_green 6 // Raro
+#define BMP_SCK 13
+#define BMP_MISO 12
+#define BMP_MOSI 11
+#define BMP_CS 10
+#define pin_staging 8
+#define pin_parachuting 9
+
+// BOARD PARAMETERS
 #define pb_dtshort 150
 #define pb_dtlong 3000
 #define blueled_blinkshort 100
 #define blueled_blinklong 1000
-#define led_blue 3
-#define led_red 4
-#define led_green 6 // Raro
+
+// PERFORMANCE
+#define t_burn 10.0 // temps combustio motor mirar
+#define h_ignite_min 3.0
+#define h_parachute 4.0 //altura d'ignicio del parachute
+#define h_max_parachute 8.0 //revisar
+#define h_detect 2.0
+#define barom_period 33 // ms
+
+//canviar valors
 
 //BMP280 variable define
 #include <Wire.h>
 #include <SPI.h>
 #include <Adafruit_BMP280.h>
-
-#define BMP_SCK 13
-#define BMP_MISO 12
-#define BMP_MOSI 11
-#define BMP_CS 10
 
 Adafruit_BMP280 bmp;
 //
@@ -25,16 +39,15 @@ int pb_ispressed=0;
 int blink_state=0;
 int led_blue_state = 0;
 int led_blue_n = 0;
-double value_baromax=0;
-double value_barom=0;
-double value_temp=0;
-double value_pressure=0;
+float value_baromax=0;
+float value_barom=0;
+float alt_base=0;
 bool flag_barom=0;
 uint32_t pb_ton;
 uint32_t led_blue_tchange = 0;
 uint32_t blueled_lastchange = 0;
 uint32_t tbarom_last=0;
-uint32_t barom_period=0;
+uint32_t t_ignite=0;
 
 
 void setup()
@@ -45,12 +58,20 @@ pinMode(led_blue,OUTPUT);
 pinMode(led_red,OUTPUT);
 pinMode(led_green,OUTPUT);
 pinMode(pushbutton,INPUT_PULLUP);
+pinMode(pin_staging, OUTPUT);
+pinMode(pin_parachuting, OUTPUT);
 Serial.println(F("BMP280 OK"));
 
-    if (!bmp.begin()) {
-        Serial.println(F("Could not find a valid BMP280 sensor, check wiring!"));
-          while (1);
-        }
+if (!bmp.begin()) {
+    Serial.println(F("Error BMP"));
+      while (1);
+    }
+for(int i=0; i<25; i++){
+  alt_base += bmp.readAltitude(1013.25)/25;
+  delay(20);
+}
+Serial.print(F("Altitud Base = "));
+Serial.println(alt_base);
 }
 
 void loop()
@@ -58,8 +79,9 @@ void loop()
   read_buttn();
   updt_barom();
   //updt_gps();
-  //igni_stage();
-  //igni_parac();
+  igni_detect();
+  igni_stage();
+  igni_parac();
   //rset_flash();
   //writ_flash();
   //send_xbee();
@@ -77,14 +99,14 @@ if(pb_ispressed){
   if(!pb_state){
     if(dt>pb_dtlong){
       pb_ispressed = false;
-      Serial.println("LongPress");
+      Serial.println(F("LongPress"));
       pb_ton = millis();
       //erase_flash();
     }else if(dt>pb_dtshort){
       pb_ispressed = false;
       state = !state;
       pb_ton = millis();
-      Serial.print("ShortPress: State = "); Serial.println(state);
+      Serial.print(F("ShortPress: State = ")); Serial.println(state);
 
     }
   }
@@ -99,15 +121,13 @@ void updt_accel(){
 }
 void updt_barom(){
   //inputs: state, tbarom_last, value_baromax
-  //outputs: tbarom_last, flag_barom, value_barom, value_baromax, value_temp, value_pressure
+  //outputs: tbarom_last, flag_barom, value_barom, value_baromax
 uint32_t dt = millis()-tbarom_last;
   if(dt>barom_period && !flag_barom){
     tbarom_last = millis();
     flag_barom = true;
    }
-   value_barom=bmp.readAltitude(1013.25);
-   value_temp=bmp.readTemperature();
-   value_pressure=bmp.readPressure();
+   value_barom=bmp.readAltitude(1013.25)-alt_base;
    if(value_barom > value_baromax){
      value_baromax=value_barom;
      Serial.print(F("BMP280 valor maxim = "));
@@ -120,13 +140,30 @@ void updt_gps(){
   //inputs: tgps_last
   //outputs: tgps_last, flag_gps, value_gps
 }
+void igni_detect(){
+  if((state == 1) && (value_barom > h_detect)){
+    state = 2;
+    t_ignite = millis();
+    Serial.println(F("State = 2"));
+  }
+}
 void igni_stage(){
-  //inputs: tignite, value_barom
+  //inputs: t_ignite, value_barom
   //outputs: tstage, flag_stage
+  if((millis()-t_ignite > t_burn) && (value_barom > h_ignite_min) && (state == 2)){
+    state=3;
+    digitalWrite(pin_staging, HIGH);
+    Serial.println(F("State = 3"));
+  }
 }
 void igni_parac(){
   //inputs: value_barom, value_baromax
   //outputs: tparac, flag_parac
+if((value_barom < h_parachute) && (state == 3) && (value_baromax > h_max_parachute)){
+  state=4;
+  digitalWrite(pin_parachuting, HIGH);
+  Serial.println(F("State = 4"));
+}
 }
 void rset_flash(){
   //inputs: erase_flash
