@@ -2,8 +2,8 @@
 
 state: 0 standby, 1 ready, 2 ignited, 3 10s, 4 parachute
 
-- ```read_buttn()```
-long press: erase flash, short press: state 0->1, or (2,3,4)->0
+- ```read_buttn()```..
+...long press: erase flash, short press: state 0->1, or (2,3,4)->0..
 - ```updt_accel()```
 state = 0, nothing
 state > 0, f=200hz to flash
