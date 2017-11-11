@@ -198,7 +198,7 @@ void updt_leds(){
         led_blue_n = 0;
       }
     }
-    else if(led_blue_n==state*2){
+    else if(led_blue_n+1==state*2){
         blink_state = 0;
         led_blue_state = LOW;
         led_blue_tchange = millis();
