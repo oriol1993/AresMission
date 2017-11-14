@@ -30,11 +30,16 @@
 #define h_max_parachute 8.0 //revisar
 #define h_detect 2.0
 #define barom_period 33
+#define n_pages 32768
 
 //BMP280 variable define
 TinyGPS gps;
 SoftwareSerial ss(6, 7);
 Adafruit_BMP280 bmp;
+Buffer cbuffer;
+SPIFlash flash;
+byte altByte[bytes_alt], timeByte[bytes_timestamp];
+uint32_t address = 0;
 //
 
 uint8_t state=0;
@@ -192,20 +197,42 @@ void rset_flash(){
 void writ_flash(){
   //inputs: taccel_last, flag_accel, value_accel, tbarom_last, flag_barom, value_barom, tstage, flag_stage, tparac, flag_parac
   //outputs:
+    if(last_state<state){
+        code = state;
+    }else{
+        if(flag_barom){code = 5;}
+        else if(flag_gps){code = 6;}
+    }
+    last_state = state;
     
-    // Load TimeStamp data into buffer
-    timestamp = (micros()/100)%65536; // REVISAR
-    timeByte[0] = timestamp & 255;
-    timeByte[1] = timestamp>>8;
+    // Load TimeStamp and code data into buffer
+    //[-- bit0--][ --bit1--]
+    //[7-5 ][4-0][   7-0   ]
+    //[code][  timestamp   ]
+    
+    timestamp = (micros()/100)%8192; // 2^13
+    timeByte[1] = timestamp & 255;
+    timeByte[0] = timestamp<<8;
+    timeByte[0] |= code<<5;
     cbuffer.CarregarBuffer(timeByte, sizeof(timeByte));
     
-    // Load BMP280 data into buffer
-    if(flag_barom){
+    if(code==5){
+        // Load BMP280 data into buffer
         flag_barom = false;
         float2byte(value_barom, altByte);  // Convert float to byte array
         cbuffer.CarregarBuffer(altByte, sizeof(altByte));
+        return;
     }
-
+    if(code==6){   
+        // Load GPS data into buffer
+        unsigned long age;
+        flag_gps = false;
+        gps.f_get_position(&flat, &flon, &age);
+        float2byte(flat, altByte);  // Convert float to byte array
+        cbuffer.CarregarBuffer(altByte, sizeof(altByte));
+        float2byte(flon, altByte);  // Convert float to byte array
+        cbuffer.CarregarBuffer(altByte, sizeof(altByte));
+    }
 }
 
 float byte2float(byte bytes_array[]){
@@ -216,6 +243,19 @@ float byte2float(byte bytes_array[]){
 
 void float2byte(float val,byte bytes_array[]){
   memcpy(bytes_array, &val, 4);
+}
+
+void buffer2flash(){
+  if(cbuffer.Check(256)) {//252
+    DEBUG_PRINT(F("Writing page ")); DEBUG_PRINTLN(pg);
+    passDataToFlash();
+  }
+}
+
+void passDataToFlash(){
+  cbuffer.DescarregarBuffer(bff,256);//252
+  flash.writeByteArray(pg++, 0, bff, PAGESIZE, false);
+  if(pg>n_pages){Serial.println(F("Max data reached!")); startstop();}
 }
 
 void send_xbee(){
