@@ -53,7 +53,8 @@ uint32_t led_blue_tchange = 0;
 uint32_t blueled_lastchange = 0;
 uint32_t tbarom_last=0;
 uint32_t t_ignite=0;
-
+//  Data storage
+byte altByte[bytes_alt], timeByte[bytes_timestamp];
 
 void setup()
 {
@@ -191,7 +192,32 @@ void rset_flash(){
 void writ_flash(){
   //inputs: taccel_last, flag_accel, value_accel, tbarom_last, flag_barom, value_barom, tstage, flag_stage, tparac, flag_parac
   //outputs:
+    
+    // Load TimeStamp data into buffer
+    timestamp = (micros()/100)%65536; // REVISAR
+    timeByte[0] = timestamp & 255;
+    timeByte[1] = timestamp>>8;
+    cbuffer.CarregarBuffer(timeByte, sizeof(timeByte));
+    
+    // Load BMP280 data into buffer
+    if(flag_barom){
+        flag_barom = false;
+        float2byte(value_barom, altByte);  // Convert float to byte array
+        cbuffer.CarregarBuffer(altByte, sizeof(altByte));
+    }
+
 }
+
+float byte2float(byte bytes_array[]){
+  float out_float;
+  memcpy(&out_float, bytes_array, 4);   // Assign bytes to input array
+  return out_float;
+}
+
+void float2byte(float val,byte bytes_array[]){
+  memcpy(bytes_array, &val, 4);
+}
+
 void send_xbee(){
   //inputs: state, tstage, flag_stage, tparac, flag_parac, tgps_last, flag_gps, value_gps
   //outputs:
@@ -235,3 +261,4 @@ void dump_flash(){
   //inputs: state
   //outputs:
 }
+
