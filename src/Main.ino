@@ -1,8 +1,15 @@
+#include <Wire.h>
+#include <SPI.h>
+#include <Adafruit_BMP280.h>
+#include <SoftwareSerial.h>
+#include <TinyGPS.h>
+
+
 // PINS
 #define pushbutton 5
 #define led_blue 3
 #define led_red 4
-#define led_green 6 // Raro
+#define led_green 5 // Raro
 #define BMP_SCK 13
 #define BMP_MISO 12
 #define BMP_MOSI 11
@@ -17,32 +24,30 @@
 #define blueled_blinklong 1000
 
 // PERFORMANCE
-#define t_burn 10.0 // temps combustio motor mirar
+#define t_burn 10.0 // temps combustio motor mirar -7s
 #define h_ignite_min 3.0
-#define h_parachute 4.0 //altura d'ignicio del parachute
+#define h_parachute 4.0 //altura d'ignicio del parachute - 450m
 #define h_max_parachute 8.0 //revisar
 #define h_detect 2.0
-#define barom_period 33 // ms
-
-//canviar valors
+#define barom_period 33
 
 //BMP280 variable define
-#include <Wire.h>
-#include <SPI.h>
-#include <Adafruit_BMP280.h>
-
+TinyGPS gps;
+SoftwareSerial ss(6, 7);
 Adafruit_BMP280 bmp;
 //
 
-int state=0;
-int pb_ispressed=0;
-int blink_state=0;
-int led_blue_state = 0;
-int led_blue_n = 0;
+uint8_t state=0;
+uint8_t pb_ispressed=0;
+uint8_t blink_state=0;
+uint8_t led_blue_state = 0;
+uint8_t led_blue_n = 0;
 float value_baromax=0;
 float value_barom=0;
 float alt_base=0;
+float flat, flon;
 bool flag_barom=0;
+bool flag_gps = 0;
 uint32_t pb_ton;
 uint32_t led_blue_tchange = 0;
 uint32_t blueled_lastchange = 0;
@@ -53,6 +58,7 @@ uint32_t t_ignite=0;
 void setup()
 {
 Serial.begin(9600);
+ss.begin(9600);
 Serial.println("REBOOT");
 pinMode(led_blue,OUTPUT);
 pinMode(led_red,OUTPUT);
@@ -78,7 +84,7 @@ void loop()
 {
   read_buttn();
   updt_barom();
-  //updt_gps();
+  updt_gps();
   igni_detect();
   igni_stage();
   igni_parac();
@@ -138,7 +144,20 @@ uint32_t dt = millis()-tbarom_last;
 
 void updt_gps(){
   //inputs: tgps_last
-  //outputs: tgps_last, flag_gps, value_gps
+  //outputs: tgps_last, flag_gps, flat, flo
+  while(ss.available()){
+    char c = ss.read();
+    if(gps.encode(c)){flag_gps = true;};
+    }
+  if (flag_gps)
+  {
+    unsigned long age;
+    gps.f_get_position(&flat, &flon, &age);
+    Serial.print(flat,6);
+    Serial.print(",");
+    Serial.println(flon,6);
+    flag_gps = false;
+  }
 }
 void igni_detect(){
   if((state == 1) && (value_barom > h_detect)){
@@ -198,7 +217,7 @@ void updt_leds(){
         led_blue_n = 0;
       }
     }
-    else if(led_blue_n==state*2){
+    else if(led_blue_n+1==state*2){
         blink_state = 0;
         led_blue_state = LOW;
         led_blue_tchange = millis();
