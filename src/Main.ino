@@ -235,6 +235,41 @@ void writ_flash(){
     }
 }
 
+void printAllPages(bool doprint) {
+  bool nd;
+  DEBUG_PRINTLN("Reading all pages");
+  cbuffer.reset();
+  pg = 0;
+  timestamp_s = 0;
+  while(pg<n_pages){
+    DEBUG_PRINT("Reading page "); DEBUG_PRINTLN(pg);
+    flash.readByteArray(pg++, 0, bff, PAGESIZE, false);
+    cbuffer.CarregarBuffer(bff, 256);//252
+    while(cbuffer.Check(sizeof(altByte) + sizeof(timeByte))){
+      nd = !buffer2serial(doprint);
+      if(nd){break;}
+    }
+    if(nd){break;}
+  }
+  DEBUG_PRINT(pg); DEBUG_PRINTLN(F(" pages found"));
+}
+
+bool buffer2serial(bool doprint){
+  cbuffer.DescarregarBuffer(altByte, sizeof(altByte));
+  cbuffer.DescarregarBuffer(timeByte, sizeof(timeByte));
+  timestamp = timeByte[0] | timeByte[1]<<8;
+  timestamp_s+=((float) (timestamp-timestamp_ant))*0.0001;
+  timestamp_ant = timestamp;
+  alt = byte2float(altByte);
+
+  if(doprint){Serial.print(alt,2); Serial.print(",");
+    Serial.print(timestamp_s,3);
+    Serial.println();
+  }
+  if(timeByte[0]==255 && timeByte[1]==255 && altByte[0]==255 && altByte[1]==255 && altByte[2]==255 && altByte[3]==255 ){return false;}
+  else {return true;}
+}
+
 float byte2float(byte bytes_array[]){
   float out_float;
   memcpy(&out_float, bytes_array, 4);   // Assign bytes to input array
