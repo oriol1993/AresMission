@@ -1,9 +1,11 @@
+#include <Arduino.h>
 #include <Wire.h>
 #include <SPI.h>
 #include <Adafruit_BMP280.h>
 #include <SoftwareSerial.h>
 #include <TinyGPS.h>
-
+#include <Buffer.h>
+#include <SPIFlash.h>
 
 // PINS
 #define pushbutton 5
@@ -24,6 +26,7 @@
 #define blueled_blinklong 1000
 
 // PERFORMANCE
+#define serial_init 1
 #define t_burn 10.0 // temps combustio motor mirar -7s
 #define h_ignite_min 3.0
 #define h_parachute 4.0 //altura d'ignicio del parachute - 450m
@@ -32,17 +35,39 @@
 #define barom_period 33
 #define n_pages 32768
 
+#define bytes_gps 4
+#define bytes_alt 4
+#define bytes_header 2
+
+//#define DEBUG
+#ifdef DEBUG
+ #define DEBUG_PRINT(x)     Serial.print (x)
+ #define DEBUG_PRINTLN(x)  Serial.println (x)
+#else
+ #define DEBUG_PRINT(x)
+ #define DEBUG_PRINTLN(x)
+#endif
+
 //BMP280 variable define
 TinyGPS gps;
 SoftwareSerial ss(6, 7);
 Adafruit_BMP280 bmp;
 Buffer cbuffer;
 SPIFlash flash;
-byte altByte[bytes_alt], timeByte[bytes_timestamp];
-uint32_t address = 0;
-//
 
-uint8_t state=0;
+byte altByte[bytes_alt];
+byte gpsByte[bytes_gps];
+byte headerByte[bytes_header];
+uint8_t code;
+uint32_t address = 0;
+//  Addresses
+uint16_t pg = 0;
+uint8_t bff[256];
+uint32_t timestamp_ant = 0;
+uint32_t timestamp_s = 0;
+uint32_t timestamp;
+
+uint8_t state=0, last_state=0;
 uint8_t pb_ispressed=0;
 uint8_t blink_state=0;
 uint8_t led_blue_state = 0;
@@ -50,7 +75,7 @@ uint8_t led_blue_n = 0;
 float value_baromax=0;
 float value_barom=0;
 float alt_base=0;
-float flat, flon;
+float flat = -1, flon = -1;
 bool flag_barom=0;
 bool flag_gps = 0;
 uint32_t pb_ton;
@@ -58,8 +83,6 @@ uint32_t led_blue_tchange = 0;
 uint32_t blueled_lastchange = 0;
 uint32_t tbarom_last=0;
 uint32_t t_ignite=0;
-//  Data storage
-byte altByte[bytes_alt], timeByte[bytes_timestamp];
 
 void setup()
 {
@@ -74,6 +97,16 @@ pinMode(pin_staging, OUTPUT);
 pinMode(pin_parachuting, OUTPUT);
 Serial.println(F("BMP280 OK"));
 
+// Flash Initialization
+Serial.print(F("Initializing FLASH memory ..."));
+flash.begin();
+delay(500);
+if (!flash.begin()) {
+  Serial.println(F("unable to connect!"));
+  //while (1);
+}
+else {Serial.println(F("connection successful!"));}
+
 if (!bmp.begin()) {
     Serial.println(F("Error BMP"));
       while (1);
@@ -82,12 +115,16 @@ for(int i=0; i<25; i++){
   alt_base += bmp.readAltitude(1013.25)/25;
   delay(20);
 }
+value_barom = alt_base;
 Serial.print(F("Altitud Base = "));
 Serial.println(alt_base);
+cbuffer.reset(); // Buffer Initialization (head = 0; tail = 0)
+send_info();
 }
 
 void loop()
 {
+  checkSerial();
   read_buttn();
   updt_barom();
   updt_gps();
@@ -95,11 +132,31 @@ void loop()
   igni_stage();
   igni_parac();
   //rset_flash();
-  //writ_flash();
+  writ_flash();
   //send_xbee();
-  //send_info();
   updt_leds();
-  //dump_flash();
+}
+
+void send_info(){
+  for(uint8_t i=0;i<10;i++){Serial.print(F("-"));}
+  for(uint8_t i=0;i<2;i++){Serial.println();}
+  Serial.print(F("STATE = ")); Serial.println(state);
+  Serial.print(F("h="));Serial.println(value_barom,2);
+  Serial.print(F("lat="));Serial.println(flat,4);
+  Serial.print(F("lon="));Serial.println(flon,4);
+  Serial.println(F("COMMANDS: "));
+  Serial.println(F("1.- Erase chip"));
+  Serial.println(F("2.- Erase required sectors"));
+  Serial.println(F("3.- Manual start/stop"));
+  Serial.println(F("4.- Dump data"));
+}
+
+void checkSerial() {
+  if(serial_init){
+    if (Serial.available() > 0) {
+      switchTask(Serial.parseInt());
+    }
+  }
 }
 
 void read_buttn(){
@@ -142,9 +199,9 @@ uint32_t dt = millis()-tbarom_last;
    value_barom=bmp.readAltitude(1013.25)-alt_base;
    if(value_barom > value_baromax){
      value_baromax=value_barom;
-     Serial.print(F("BMP280 valor maxim = "));
-     Serial.print(value_baromax);
-     Serial.println(F("m"));
+     DEBUG_PRINT(F("BMP280 valor maxim = "));
+     DEBUG_PRINT(value_baromax);
+     DEBUG_PRINTLN(F("m"));
      }
  }
 
@@ -159,11 +216,10 @@ void updt_gps(){
   {
     unsigned long age;
     gps.f_get_position(&flat, &flon, &age);
-    Serial.print(flat,6);
-    Serial.print(",");
-    Serial.println(flon,6);
-    flag_gps = false;
-  }
+    DEBUG_PRINT(flat);
+    DEBUG_PRINT(",");
+    DEBUG_PRINTLN(flon);
+    }
 }
 void igni_detect(){
   if((state == 1) && (value_barom > h_detect)){
@@ -197,6 +253,7 @@ void rset_flash(){
 void writ_flash(){
   //inputs: taccel_last, flag_accel, value_accel, tbarom_last, flag_barom, value_barom, tstage, flag_stage, tparac, flag_parac
   //outputs:
+  byte databyte[4];
     if(last_state<state){
         code = state;
     }else{
@@ -204,18 +261,18 @@ void writ_flash(){
         else if(flag_gps){code = 6;}
     }
     last_state = state;
-    
+
     // Load TimeStamp and code data into buffer
-    //[-- bit0--][ --bit1--]
+    //[--byte0--][--byte1--]
     //[7-5 ][4-0][   7-0   ]
     //[code][  timestamp   ]
-    
+
     timestamp = (micros()/100)%8192; // 2^13
-    timeByte[1] = timestamp & 255;
-    timeByte[0] = timestamp<<8;
-    timeByte[0] |= code<<5;
-    cbuffer.CarregarBuffer(timeByte, sizeof(timeByte));
-    
+    headerByte[1] = timestamp & 255;
+    headerByte[0] = timestamp<<8;
+    headerByte[0] |= code<<5;
+    cbuffer.CarregarBuffer(headerByte, sizeof(headerByte));
+
     if(code==5){
         // Load BMP280 data into buffer
         flag_barom = false;
@@ -223,15 +280,15 @@ void writ_flash(){
         cbuffer.CarregarBuffer(altByte, sizeof(altByte));
         return;
     }
-    if(code==6){   
+    if(code==6){
         // Load GPS data into buffer
         unsigned long age;
         flag_gps = false;
         gps.f_get_position(&flat, &flon, &age);
-        float2byte(flat, altByte);  // Convert float to byte array
-        cbuffer.CarregarBuffer(altByte, sizeof(altByte));
-        float2byte(flon, altByte);  // Convert float to byte array
-        cbuffer.CarregarBuffer(altByte, sizeof(altByte));
+        float2byte(flat, databyte);  // Convert float to byte array
+        cbuffer.CarregarBuffer(databyte, sizeof(databyte));
+        float2byte(flon, databyte);  // Convert float to byte array
+        cbuffer.CarregarBuffer(databyte, sizeof(databyte));
     }
 }
 
@@ -245,7 +302,8 @@ void printAllPages(bool doprint) {
     DEBUG_PRINT("Reading page "); DEBUG_PRINTLN(pg);
     flash.readByteArray(pg++, 0, bff, PAGESIZE, false);
     cbuffer.CarregarBuffer(bff, 256);//252
-    while(cbuffer.Check(sizeof(altByte) + sizeof(timeByte))){
+    //while(cbuffer.Check(sizeof(altByte) + sizeof(timeByte))){
+    while(1){
       nd = !buffer2serial(doprint);
       if(nd){break;}
     }
@@ -255,18 +313,44 @@ void printAllPages(bool doprint) {
 }
 
 bool buffer2serial(bool doprint){
-  cbuffer.DescarregarBuffer(altByte, sizeof(altByte));
-  cbuffer.DescarregarBuffer(timeByte, sizeof(timeByte));
-  timestamp = timeByte[0] | timeByte[1]<<8;
+  float alt;
+
+  cbuffer.DescarregarBuffer(headerByte, sizeof(headerByte));
+  code = headerByte[0]>>4;
+  timestamp = (headerByte[0] & B00011111)<<8 | headerByte[1];
   timestamp_s+=((float) (timestamp-timestamp_ant))*0.0001;
   timestamp_ant = timestamp;
-  alt = byte2float(altByte);
-
-  if(doprint){Serial.print(alt,2); Serial.print(",");
-    Serial.print(timestamp_s,3);
-    Serial.println();
+  Serial.print(F("t="));
+  Serial.println(timestamp_s,4);
+  switch(code){
+    case 1:
+      Serial.println(F(",State=Ready!"));
+      break;
+    case 2:
+      Serial.println(F(",State=Launch!"));
+      break;
+    case 3:
+      Serial.println(F(",State=Second motor ignited!"));
+      break;
+    case 5:
+      cbuffer.DescarregarBuffer(altByte, sizeof(altByte));
+      alt = byte2float(altByte);
+      Serial.print(",h=");
+      Serial.println(alt,3);
+      break;
+    case 6:
+      cbuffer.DescarregarBuffer(gpsByte, sizeof(gpsByte));
+      flat = byte2float(gpsByte);
+      cbuffer.DescarregarBuffer(gpsByte, sizeof(gpsByte));
+      flon = byte2float(gpsByte);
+      Serial.print(",lat=");
+      Serial.print(flat,3);
+      Serial.print(",lon=");
+      Serial.println(flon,3);
+      break;
   }
-  if(timeByte[0]==255 && timeByte[1]==255 && altByte[0]==255 && altByte[1]==255 && altByte[2]==255 && altByte[3]==255 ){return false;}
+
+  if(headerByte[0]==255 && headerByte[1]==255){return false;}
   else {return true;}
 }
 
@@ -290,14 +374,10 @@ void buffer2flash(){
 void passDataToFlash(){
   cbuffer.DescarregarBuffer(bff,256);//252
   flash.writeByteArray(pg++, 0, bff, PAGESIZE, false);
-  if(pg>n_pages){Serial.println(F("Max data reached!")); startstop();}
+  if(pg>n_pages){Serial.println(F("Max data reached!"));} // Aqui es podria parar la grabació
 }
 
 void send_xbee(){
-  //inputs: state, tstage, flag_stage, tparac, flag_parac, tgps_last, flag_gps, value_gps
-  //outputs:
-}
-void send_info(){
   //inputs: state, tstage, flag_stage, tparac, flag_parac, tgps_last, flag_gps, value_gps
   //outputs:
 }
@@ -337,3 +417,37 @@ void dump_flash(){
   //outputs:
 }
 
+void switchTask(uint8_t var){
+  uint16_t i_pg = 0;
+  switch (var) {
+    case 1:
+        Serial.println(F("Erasing chip..."));
+        if(flash.eraseChip()){
+
+        }else{
+          Serial.println(F("Erase chip failed!"));
+        }
+      break;
+    case 2:
+        Serial.print(F("Erasing chip (intellegently)..."));
+        printAllPages(false);
+        while(i_pg<=pg){
+          flash.eraseSector(i_pg,0);
+          i_pg += 16;
+        }
+        pg = 0;
+        Serial.println(F("done!"));
+      break;
+      Serial.println(F("Erase chip success!"));
+    case 3:
+        Serial.println(F("Serial start/stop!"));
+        state = !state;
+      break;
+    case 4:
+      printAllPages(true);
+      break;
+    default:
+      break;
+  }
+  send_info();
+}
